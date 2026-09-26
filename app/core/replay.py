@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from .clock import (
     academic_day,
@@ -89,6 +89,7 @@ class StudentProgress:
     daily: list[DayTotal] = field(default_factory=list)
     checkins: list[CheckinRecord] = field(default_factory=list)
     adjustments: list[Adjustment] = field(default_factory=list)
+    source_student_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -127,8 +128,18 @@ def replay(
     timezone_name: str,
     required_seconds: int,
     up_to_event_id: str | None = None,
+    aliases: Mapping[str, str] | None = None,
 ) -> ReplayState:
-    """执行确定性的业务处理。"""
+    """执行确定性的业务处理。
+
+    aliases 把已合并的学员标识映射到根身份：事件按根身份聚合，
+    但每条记录仍保留原始 student_id，不改动事件主体。
+    """
+    alias_map = dict(aliases or {})
+
+    def group_of(student_id: str) -> str:
+        return alias_map.get(student_id, student_id)
+
     sorted_events = sorted(
         (e for e in events if e.plan_version == plan_version),
         key=lambda e: e.event_id,
@@ -141,18 +152,19 @@ def replay(
     adjustments_by_student: dict[str, list[Adjustment]] = {}
 
     for event in sorted_events:
+        group_id = group_of(event.student_id)
         if event.event_type == EventType.CHECKIN:
             record = _parse_checkin(event, timezone_name)
-            checkins_by_student.setdefault(event.student_id, []).append(record)
+            checkins_by_student.setdefault(group_id, []).append(record)
             checkin_index[event.event_id] = record
         elif event.event_type == EventType.MENTOR_CONFIRM:
             target_id = event.payload.get("checkin_event_id")
             target = checkin_index.get(target_id)
-            if target is not None and target.student_id == event.student_id:
+            if target is not None and group_of(target.student_id) == group_id:
                 target.status = CheckinStatus.CONFIRMED
         elif event.event_type == EventType.LEAVE_CORRECTION:
             seconds = int(event.payload.get("adjustment_seconds", 0))
-            adjustments_by_student.setdefault(event.student_id, []).append(
+            adjustments_by_student.setdefault(group_id, []).append(
                 Adjustment(
                     event_id=event.event_id,
                     student_id=event.student_id,
@@ -166,6 +178,10 @@ def replay(
     for student_id in all_students:
         records = checkins_by_student.get(student_id, [])
         adjustments = adjustments_by_student.get(student_id, [])
+        source_ids = sorted(
+            {r.student_id for r in records}
+            | {a.student_id for a in adjustments}
+        )
 
         confirmed_intervals = [
             (r.start_utc, r.end_utc) for r in records if r.counts
@@ -209,6 +225,7 @@ def replay(
             daily=daily,
             checkins=sorted(records, key=lambda r: r.start_utc),
             adjustments=sorted(adjustments, key=lambda a: a.event_id),
+            source_student_ids=source_ids,
         )
 
     return ReplayState(
@@ -224,6 +241,7 @@ def explain_checkin(record: CheckinRecord, tz_name: str) -> dict[str, Any]:
     segments = split_by_academic_day(record.start_utc, record.end_utc, tz_name)
     return {
         "event_id": record.event_id,
+        "student_id": record.student_id,
         "activity_id": record.activity_id,
         "activity_type": record.activity_type,
         "status": record.status.value,

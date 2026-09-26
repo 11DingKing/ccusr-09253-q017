@@ -69,3 +69,71 @@ class Freeze(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow, server_default=func.now()
     )
+
+
+class IdentityMergeCase(Base):
+    __tablename__ = "identity_merge_cases"
+
+    plan_version: Mapped[str] = mapped_column(String(128), primary_key=True)
+    case_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    survivor_student_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    merged_student_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    audit: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    __table_args__ = (
+        Index("ix_merge_cases_plan_state", "plan_version", "state"),
+    )
+
+
+class IdentityMergeEvidence(Base):
+    __tablename__ = "identity_merge_evidence"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    plan_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    case_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    evidence_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    reference: Mapped[str] = mapped_column(String(256), nullable=False)
+    submitted_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "plan_version", "case_id", "evidence_id", name="uq_merge_evidence"
+        ),
+    )
+
+
+class IdentityAliasRevision(Base):
+    """别名注册表的追加式版本日志；撤销通过反向版本实现。"""
+
+    __tablename__ = "identity_alias_revisions"
+
+    plan_version: Mapped[str] = mapped_column(String(128), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    case_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    alias_student_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    canonical_student_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    reason: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    __table_args__ = (
+        CheckConstraint("version >= 1", name="ck_alias_revisions_version_pos"),
+        Index("ix_alias_revisions_plan_case", "plan_version", "case_id"),
+    )

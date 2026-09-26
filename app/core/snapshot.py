@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Mapping
 
 from .replay import (
     CheckinRecord,
@@ -25,6 +25,7 @@ class Snapshot:
     generated_at: str
     event_cutoff_id: str | None
     students: list[dict[str, Any]]
+    alias_version: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -34,6 +35,7 @@ class Snapshot:
             "required_seconds": self.required_seconds,
             "generated_at": self.generated_at,
             "event_cutoff_id": self.event_cutoff_id,
+            "alias_version": self.alias_version,
             "students": self.students,
         }
 
@@ -47,12 +49,14 @@ class Snapshot:
             generated_at=data["generated_at"],
             event_cutoff_id=data.get("event_cutoff_id"),
             students=list(data.get("students", [])),
+            alias_version=data.get("alias_version"),
         )
 
 
 def _student_to_dict(progress: StudentProgress, tz_name: str) -> dict[str, Any]:
     return {
         "student_id": progress.student_id,
+        "source_student_ids": list(progress.source_student_ids),
         "confirmed_seconds": progress.confirmed_seconds,
         "pending_seconds": progress.pending_seconds,
         "adjustment_seconds": progress.adjustment_seconds,
@@ -68,6 +72,7 @@ def _student_to_dict(progress: StudentProgress, tz_name: str) -> dict[str, Any]:
         "adjustments": [
             {
                 "event_id": a.event_id,
+                "student_id": a.student_id,
                 "seconds": a.seconds,
                 "reason": a.reason,
             }
@@ -85,6 +90,8 @@ def build_snapshot(
     freeze_id: str | None = None,
     event_cutoff_id: str | None = None,
     generated_at: datetime | None = None,
+    aliases: Mapping[str, str] | None = None,
+    alias_version: int | None = None,
 ) -> Snapshot:
     """执行确定性的业务处理。"""
     state: ReplayState = replay(
@@ -93,6 +100,7 @@ def build_snapshot(
         timezone_name=timezone_name,
         required_seconds=required_seconds,
         up_to_event_id=event_cutoff_id,
+        aliases=aliases,
     )
     if generated_at is None:
         generated_at = datetime.now(timezone.utc)
@@ -111,6 +119,7 @@ def build_snapshot(
         generated_at=generated_at.isoformat().replace("+00:00", "Z"),
         event_cutoff_id=event_cutoff_id,
         students=students,
+        alias_version=alias_version,
     )
 
 

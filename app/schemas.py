@@ -84,6 +84,7 @@ class DailyTotal(BaseModel):
 
 class CheckinExplanation(BaseModel):
     event_id: str
+    student_id: str = ""
     activity_id: str
     activity_type: str
     status: str
@@ -96,12 +97,14 @@ class CheckinExplanation(BaseModel):
 
 class AdjustmentOut(BaseModel):
     event_id: str
+    student_id: str = ""
     seconds: int
     reason: str
 
 
 class StudentProgressOut(BaseModel):
     student_id: str
+    source_student_ids: list[str] = []
     confirmed_seconds: int
     pending_seconds: int
     adjustment_seconds: int
@@ -121,6 +124,7 @@ class SnapshotOut(BaseModel):
     required_seconds: int
     generated_at: str
     event_cutoff_id: str | None
+    alias_version: int | None = None
     students: list[dict[str, Any]]
 
 
@@ -138,3 +142,84 @@ class DiffOut(BaseModel):
     new_event_cutoff_id: str | None
     student_changes: list[dict[str, Any]]
     students_affected: int
+
+
+class MergeCaseOpenIn(BaseModel):
+    case_id: str = Field(..., min_length=1, max_length=128)
+    survivor_student_id: str = Field(..., min_length=1, max_length=128)
+    merged_student_id: str = Field(..., min_length=1, max_length=128)
+    actor_id: str = Field(..., min_length=1, max_length=128)
+    reason: str = Field("", max_length=512)
+
+
+class MergeEvidenceIn(BaseModel):
+    evidence_id: str = Field(..., min_length=1, max_length=128)
+    kind: str = Field(..., min_length=1, max_length=64)
+    reference: str = Field(..., min_length=1, max_length=256)
+    actor_id: str = Field(..., min_length=1, max_length=128)
+
+
+class MergeActionIn(BaseModel):
+    actor_id: str = Field(..., min_length=1, max_length=128)
+    reason: str = Field(..., min_length=1, max_length=512)
+
+
+class MergeEvidenceOut(BaseModel):
+    evidence_id: str
+    kind: str
+    reference: str
+    submitted_by: str
+    submitted_at: str
+
+
+class MergeAuditOut(BaseModel):
+    sequence: int
+    action: str
+    actor_id: str
+    occurred_at: str
+    before: str
+    after: str
+    reason: str
+    fingerprint: str
+
+
+class MergeCaseOut(BaseModel):
+    case_id: str
+    plan_version: str
+    survivor_student_id: str
+    merged_student_id: str
+    state: str
+    reason: str
+    created_by: str
+    version: int
+    created_at: str
+    updated_at: str
+    evidence: list[MergeEvidenceOut]
+    audit: list[MergeAuditOut]
+
+
+class MergeActionOut(BaseModel):
+    case: MergeCaseOut
+    alias_version: int
+    revision: dict[str, Any]
+
+
+class MergeImpactOut(BaseModel):
+    case_id: str
+    plan_version: str
+    state: str
+    survivor_student_id: str
+    merged_student_id: str
+    current_alias_version: int
+    evidence_count: int
+    approvable: bool
+    blockers: list[str]
+    before: dict[str, Any]
+    after: dict[str, Any]
+
+
+class AliasRegistryOut(BaseModel):
+    plan_version: str
+    current_version: int
+    aliases: list[dict[str, Any]]
+    revisions: list[dict[str, Any]]

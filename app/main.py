@@ -2,9 +2,22 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
+from .db import engine
+from .models import Base
 from .routers import router
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # 自包含部署：启动时确保 SQLite 表结构存在（幂等）。
+    Base.metadata.create_all(engine)
+    yield
+
 
 app = FastAPI(
     title="Practice Hours Guard",
@@ -14,6 +27,7 @@ app = FastAPI(
         "confirmations and leave corrections are append-only; compliance is "
         "derived by replay and can be frozen into an immutable snapshot."
     ),
+    lifespan=lifespan,
 )
 
 app.include_router(router)
