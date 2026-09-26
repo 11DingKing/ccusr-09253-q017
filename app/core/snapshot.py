@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Mapping
 
 from .replay import (
     CheckinRecord,
@@ -25,6 +25,8 @@ class Snapshot:
     generated_at: str
     event_cutoff_id: str | None
     students: list[dict[str, Any]]
+    # 生成该快照时使用的身份（别名）版本；签发后不再变化。
+    identity_version: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -35,6 +37,7 @@ class Snapshot:
             "generated_at": self.generated_at,
             "event_cutoff_id": self.event_cutoff_id,
             "students": self.students,
+            "identity_version": self.identity_version,
         }
 
     @classmethod
@@ -47,6 +50,7 @@ class Snapshot:
             generated_at=data["generated_at"],
             event_cutoff_id=data.get("event_cutoff_id"),
             students=list(data.get("students", [])),
+            identity_version=data.get("identity_version"),
         )
 
 
@@ -60,6 +64,7 @@ def _student_to_dict(progress: StudentProgress, tz_name: str) -> dict[str, Any]:
         "lesson_units": progress.lesson_units,
         "pending_lesson_units": progress.pending_lesson_units,
         "meets_requirement": progress.meets_requirement,
+        "source_student_ids": list(progress.source_student_ids),
         "daily": [
             {"academic_day": d.academic_day, "seconds": d.seconds}
             for d in progress.daily
@@ -68,6 +73,7 @@ def _student_to_dict(progress: StudentProgress, tz_name: str) -> dict[str, Any]:
         "adjustments": [
             {
                 "event_id": a.event_id,
+                "student_id": a.original_student_id or a.student_id,
                 "seconds": a.seconds,
                 "reason": a.reason,
             }
@@ -85,6 +91,8 @@ def build_snapshot(
     freeze_id: str | None = None,
     event_cutoff_id: str | None = None,
     generated_at: datetime | None = None,
+    alias_map: Mapping[str, str] | None = None,
+    identity_version: int | None = None,
 ) -> Snapshot:
     """执行确定性的业务处理。"""
     state: ReplayState = replay(
@@ -93,6 +101,8 @@ def build_snapshot(
         timezone_name=timezone_name,
         required_seconds=required_seconds,
         up_to_event_id=event_cutoff_id,
+        alias_map=alias_map,
+        identity_version=identity_version,
     )
     if generated_at is None:
         generated_at = datetime.now(timezone.utc)
@@ -111,6 +121,7 @@ def build_snapshot(
         generated_at=generated_at.isoformat().replace("+00:00", "Z"),
         event_cutoff_id=event_cutoff_id,
         students=students,
+        identity_version=identity_version,
     )
 
 
@@ -191,6 +202,8 @@ def diff_snapshots(old: Snapshot, new: Snapshot) -> dict[str, Any]:
         "new_generated_at": new.generated_at,
         "old_event_cutoff_id": old.event_cutoff_id,
         "new_event_cutoff_id": new.event_cutoff_id,
+        "old_identity_version": old.identity_version,
+        "new_identity_version": new.identity_version,
         "student_changes": student_changes,
         "students_affected": len(student_changes),
     }

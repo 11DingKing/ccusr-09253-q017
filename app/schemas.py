@@ -84,6 +84,7 @@ class DailyTotal(BaseModel):
 
 class CheckinExplanation(BaseModel):
     event_id: str
+    student_id: str = ""
     activity_id: str
     activity_type: str
     status: str
@@ -96,6 +97,7 @@ class CheckinExplanation(BaseModel):
 
 class AdjustmentOut(BaseModel):
     event_id: str
+    student_id: str = ""
     seconds: int
     reason: str
 
@@ -109,6 +111,7 @@ class StudentProgressOut(BaseModel):
     lesson_units: int
     pending_lesson_units: int
     meets_requirement: bool
+    source_student_ids: list[str] = Field(default_factory=list)
     daily: list[DailyTotal]
     checkins: list[CheckinExplanation]
     adjustments: list[AdjustmentOut]
@@ -121,6 +124,7 @@ class SnapshotOut(BaseModel):
     required_seconds: int
     generated_at: str
     event_cutoff_id: str | None
+    identity_version: int | None = None
     students: list[dict[str, Any]]
 
 
@@ -136,5 +140,96 @@ class DiffOut(BaseModel):
     new_generated_at: str
     old_event_cutoff_id: str | None
     new_event_cutoff_id: str | None
+    old_identity_version: int | None = None
+    new_identity_version: int | None = None
     student_changes: list[dict[str, Any]]
     students_affected: int
+
+
+# ---------------------------------------------------------------------------
+# 身份合并案件
+# ---------------------------------------------------------------------------
+
+
+class MergeCaseIn(BaseModel):
+    case_id: str = Field(..., min_length=1, max_length=128)
+    survivor_id: str = Field(..., min_length=1, max_length=128)
+    merged_id: str = Field(..., min_length=1, max_length=128)
+    reason: str = Field("", max_length=512)
+    created_by: str = Field(..., min_length=1, max_length=128)
+
+
+class EvidenceIn(BaseModel):
+    evidence_type: str = Field(..., min_length=1, max_length=64)
+    reference: str = Field(..., min_length=1, max_length=256)
+    detail: dict[str, Any] = Field(default_factory=dict)
+    submitted_by: str = Field(..., min_length=1, max_length=128)
+
+
+class EvidenceOut(BaseModel):
+    evidence_id: int
+    evidence_type: str
+    reference: str
+    detail: dict[str, Any]
+    submitted_by: str
+    created_at: datetime
+
+
+class MergeCaseOut(BaseModel):
+    case_id: str
+    plan_version: str
+    survivor_id: str
+    merged_id: str
+    state: str
+    reason: str
+    created_by: str
+    approved_by: str | None = None
+    approved_version: int | None = None
+    revoked_by: str | None = None
+    revoked_version: int | None = None
+    created_at: datetime
+    updated_at: datetime
+    evidence: list[EvidenceOut] = Field(default_factory=list)
+
+
+class DecisionIn(BaseModel):
+    actor_id: str = Field(..., min_length=1, max_length=128)
+    reason: str = Field("", max_length=512)
+
+
+class RevokeIn(BaseModel):
+    actor_id: str = Field(..., min_length=1, max_length=128)
+    reason: str = Field(..., min_length=1, max_length=512)
+
+
+class MergePreviewOut(BaseModel):
+    case_id: str
+    plan_version: str
+    state: str
+    survivor_id: str
+    merged_id: str
+    identity_version: int
+    projected_version: int
+    applicable: bool
+    rejection_reason: str | None = None
+    before: dict[str, Any]
+    after: dict[str, Any] | None = None
+    events_reattributed: int
+    freezes: list[dict[str, Any]]
+
+
+class AliasVersionOut(BaseModel):
+    seq: int
+    case_id: str
+    action: str
+    survivor_id: str
+    merged_id: str
+    actor_id: str
+    reason: str
+    created_at: datetime
+
+
+class AliasMapOut(BaseModel):
+    plan_version: str
+    identity_version: int
+    aliases: dict[str, str]

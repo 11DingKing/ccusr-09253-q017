@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from .clock import (
     academic_day,
@@ -15,6 +15,7 @@ from .clock import (
     to_utc,
     union_seconds,
 )
+from .identity import resolve
 
 
 class EventType(StrEnum):
@@ -52,6 +53,8 @@ class CheckinRecord:
     start_utc: datetime
     end_utc: datetime
     status: CheckinStatus
+    # 事件原始主体：聚合键 student_id 可能是合并后的规范身份。
+    original_student_id: str | None = None
 
     @property
     def seconds(self) -> int:
@@ -68,6 +71,7 @@ class Adjustment:
     student_id: str
     seconds: int
     reason: str
+    original_student_id: str | None = None
 
 
 @dataclass
@@ -89,6 +93,8 @@ class StudentProgress:
     daily: list[DayTotal] = field(default_factory=list)
     checkins: list[CheckinRecord] = field(default_factory=list)
     adjustments: list[Adjustment] = field(default_factory=list)
+    # 该规范身份在当前别名版本下聚合了哪些原始主体。
+    source_student_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -97,10 +103,15 @@ class ReplayState:
     timezone: str
     required_seconds: int
     students: dict[str, StudentProgress]
+    identity_version: int | None = None
 
 
 def _parse_checkin(
-    event: Event, tz_name: str
+    event: Event,
+    tz_name: str,
+    *,
+    canonical_id: str | None = None,
+    original_student_id: str | None = None,
 ) -> CheckinRecord:
     start = to_utc(datetime.fromisoformat(event.payload["check_in_at"]))
     end = to_utc(datetime.fromisoformat(event.payload["check_out_at"]))
@@ -111,12 +122,13 @@ def _parse_checkin(
     )
     return CheckinRecord(
         event_id=event.event_id,
-        student_id=event.student_id,
+        student_id=canonical_id or event.student_id,
         activity_id=event.payload.get("activity_id", ""),
         activity_type=activity_type,
         start_utc=start,
         end_utc=end,
         status=status,
+        original_student_id=original_student_id,
     )
 
 
@@ -127,8 +139,21 @@ def replay(
     timezone_name: str,
     required_seconds: int,
     up_to_event_id: str | None = None,
+    alias_map: Mapping[str, str] | None = None,
+    identity_version: int | None = None,
 ) -> ReplayState:
-    """执行确定性的业务处理。"""
+    """执行确定性的业务处理。
+
+    当提供 ``alias_map`` 时，每条事件先沿别名链解析到规范身份，再按
+    规范身份聚合；每条记录仍保留 ``original_student_id``，原始事件
+    表永不改写。导师确认按规范身份匹配：合并后任一历史学号发起的
+    确认都能生效，未合并时行为与原先完全一致。
+    """
+    aliases = alias_map or {}
+
+    def _canonical(raw: str) -> str:
+        return resolve(aliases, raw) if aliases else raw
+
     sorted_events = sorted(
         (e for e in events if e.plan_version == plan_version),
         key=lambda e: e.event_id,
@@ -139,25 +164,35 @@ def replay(
     checkins_by_student: dict[str, list[CheckinRecord]] = {}
     checkin_index: dict[str, CheckinRecord] = {}
     adjustments_by_student: dict[str, list[Adjustment]] = {}
+    sources_by_student: dict[str, set[str]] = {}
 
     for event in sorted_events:
+        raw_id = event.student_id
+        canonical_id = _canonical(raw_id)
+        sources_by_student.setdefault(canonical_id, set()).add(raw_id)
         if event.event_type == EventType.CHECKIN:
-            record = _parse_checkin(event, timezone_name)
-            checkins_by_student.setdefault(event.student_id, []).append(record)
+            record = _parse_checkin(
+                event,
+                timezone_name,
+                canonical_id=canonical_id,
+                original_student_id=raw_id if canonical_id != raw_id else None,
+            )
+            checkins_by_student.setdefault(canonical_id, []).append(record)
             checkin_index[event.event_id] = record
         elif event.event_type == EventType.MENTOR_CONFIRM:
             target_id = event.payload.get("checkin_event_id")
             target = checkin_index.get(target_id)
-            if target is not None and target.student_id == event.student_id:
+            if target is not None and target.student_id == canonical_id:
                 target.status = CheckinStatus.CONFIRMED
         elif event.event_type == EventType.LEAVE_CORRECTION:
             seconds = int(event.payload.get("adjustment_seconds", 0))
-            adjustments_by_student.setdefault(event.student_id, []).append(
+            adjustments_by_student.setdefault(canonical_id, []).append(
                 Adjustment(
                     event_id=event.event_id,
-                    student_id=event.student_id,
+                    student_id=canonical_id,
                     seconds=seconds,
                     reason=str(event.payload.get("reason", "")),
+                    original_student_id=raw_id if canonical_id != raw_id else None,
                 )
             )
 
@@ -209,6 +244,7 @@ def replay(
             daily=daily,
             checkins=sorted(records, key=lambda r: r.start_utc),
             adjustments=sorted(adjustments, key=lambda a: a.event_id),
+            source_student_ids=sorted(sources_by_student.get(student_id, {student_id})),
         )
 
     return ReplayState(
@@ -216,6 +252,7 @@ def replay(
         timezone=timezone_name,
         required_seconds=required_seconds,
         students=students,
+        identity_version=identity_version,
     )
 
 
@@ -224,6 +261,8 @@ def explain_checkin(record: CheckinRecord, tz_name: str) -> dict[str, Any]:
     segments = split_by_academic_day(record.start_utc, record.end_utc, tz_name)
     return {
         "event_id": record.event_id,
+        # 原始主体：事件由哪个学号上报，不因聚合而改写。
+        "student_id": record.original_student_id or record.student_id,
         "activity_id": record.activity_id,
         "activity_type": record.activity_type,
         "status": record.status.value,
